@@ -2,6 +2,15 @@ import torch
 
 from data import get_dataloaders
 from model import CNN
+from uncertainty import compute_uncertainty
+
+
+# Select device
+device = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
+
+print("Using device:", device)
 
 
 # Load CIFAR-10 data
@@ -17,32 +26,58 @@ model = CNN(
 )
 
 
-# Get one real batch of CIFAR-10 images
-images, labels = next(iter(train_loader))
+# Load the trained CNN weights
+model.load_state_dict(
+    torch.load(
+        "shishya_cnn.pth",
+        map_location=device
+    )
+)
+
+model = model.to(device)
+model.eval()
+
+
+# Get one batch from test data
+images, labels = next(iter(test_loader))
+
+images = images.to(device)
 
 
 print("Input images:", images.shape)
 print("Labels:", labels.shape)
 
 
-# Run the real images through the CNN
+# Run images through the trained CNN
 with torch.no_grad():
 
-    # Get penultimate-layer features
+    # Get penultimate-layer embeddings
     embeddings = model.get_embedding(images)
 
-    # Get classification output
+    # Get classification logits
     logits = model(images)
 
 
-print("Embeddings:", embeddings.shape)
+# Compute predictions and uncertainty
+results = compute_uncertainty(logits)
+
+predictions = results["predictions"]
+uncertainty_scores = results["uncertainty"]
+
+
+print("\nEmbeddings:", embeddings.shape)
 print("Logits:", logits.shape)
-
-
-# Convert logits into predicted class indices
-predictions = torch.argmax(logits, dim=1)
-
 print("Predictions:", predictions.shape)
+print("Uncertainty scores:", uncertainty_scores.shape)
 
-print("First 10 actual labels:", labels[:10])
-print("First 10 predictions:", predictions[:10])
+print("\nFirst 10 actual labels:")
+print(labels[:10])
+
+print("\nFirst 10 predictions:")
+print(predictions[:10].cpu())
+
+print("\nFirst 10 uncertainty scores:")
+print(uncertainty_scores[:10].cpu())
+
+print("\nAverage uncertainty:")
+print(uncertainty_scores.mean().item())
