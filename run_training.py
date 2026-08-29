@@ -1,29 +1,43 @@
 import torch
 
 from data import get_dataloaders
-from model import CNN
+from model import SimpleCNN
 from train import train_model
 
 
+# Device
+device = torch.device(
+    "cuda" if torch.cuda.is_available() else "cpu"
+)
+
+print("Using device:", device)
+
+
 # Load CIFAR-10 data
-train_loader, validation_loader, test_loader = get_dataloaders(
+train_loader, validation_loader, test_loader, train_dataset = get_dataloaders(
     batch_size=64
 )
 
-# Create CNN
-model = CNN(
+
+# Create the CNN
+model = SimpleCNN(
     num_classes=10,
-    embedding_dim=128
+    dropout_p=0.3,
+    in_channels=3,
+    image_size=32
 )
 
+
 # Train CNN
-trained_model = train_model(
+trained_model, history = train_model(
     model=model,
     train_loader=train_loader,
-    validation_loader=validation_loader,
-    num_epochs=10,
-    learning_rate=0.001,
+    val_loader=validation_loader,
+    epochs=10,
+    lr=0.001,
+    device=device,
 )
+
 
 # Save trained model
 torch.save(

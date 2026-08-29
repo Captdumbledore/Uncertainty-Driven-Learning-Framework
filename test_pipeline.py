@@ -1,11 +1,15 @@
 import torch
 
 from data import get_dataloaders
-from model import CNN
-from uncertainty import compute_uncertainty
+from model import SimpleCNN
+from uncertainty import (
+    mc_dropout_predict,
+    select_top_uncertain,
+    save_uncertainty_csv
+)
 
 
-# Select device
+# Device
 device = torch.device(
     "cuda" if torch.cuda.is_available() else "cpu"
 )
@@ -14,19 +18,21 @@ print("Using device:", device)
 
 
 # Load CIFAR-10 data
-train_loader, validation_loader, test_loader = get_dataloaders(
+train_loader, validation_loader, test_loader, train_dataset = get_dataloaders(
     batch_size=64
 )
 
 
-# Create the CNN model
-model = CNN(
+# Create CNN
+model = SimpleCNN(
     num_classes=10,
-    embedding_dim=128
+    dropout_p=0.3,
+    in_channels=3,
+    image_size=32
 )
 
 
-# Load the trained CNN weights
+# Load trained model
 model.load_state_dict(
     torch.load(
         "shishya_cnn.pth",
@@ -38,46 +44,44 @@ model = model.to(device)
 model.eval()
 
 
-# Get one batch from test data
-images, labels = next(iter(test_loader))
-
-images = images.to(device)
-
-
-print("Input images:", images.shape)
-print("Labels:", labels.shape)
-
-
-# Run images through the trained CNN
-with torch.no_grad():
-
-    # Get penultimate-layer embeddings
-    embeddings = model.get_embedding(images)
-
-    # Get classification logits
-    logits = model(images)
+# MC Dropout prediction
+results = mc_dropout_predict(
+    model=model,
+    data_loader=test_loader,
+    device=device,
+    n_samples=30
+)
 
 
-# Compute predictions and uncertainty
-results = compute_uncertainty(logits)
+# Select top 10% uncertain samples
+selected_indices, selected_scores = select_top_uncertain(
+    results["entropy"],
+    fraction=0.10
+)
 
-predictions = results["predictions"]
-uncertainty_scores = results["uncertainty"]
+
+# Save uncertainty results
+save_uncertainty_csv(
+    results,
+    selected_indices,
+    output_path="uncertainty_scores.csv"
+)
 
 
-print("\nEmbeddings:", embeddings.shape)
-print("Logits:", logits.shape)
-print("Predictions:", predictions.shape)
-print("Uncertainty scores:", uncertainty_scores.shape)
+print("\nMean probabilities:", results["mean_probs"].shape)
+print("Predicted classes:", results["predicted_classes"].shape)
+print("Confidence:", results["confidence"].shape)
+print("Entropy:", results["entropy"].shape)
+print("True labels:", results["true_labels"].shape)
 
-print("\nFirst 10 actual labels:")
-print(labels[:10])
+print("\nNumber of selected uncertain samples:")
+print(len(selected_indices))
 
-print("\nFirst 10 predictions:")
-print(predictions[:10].cpu())
+print("\nFirst 10 selected indices:")
+print(selected_indices[:10])
 
-print("\nFirst 10 uncertainty scores:")
-print(uncertainty_scores[:10].cpu())
+print("\nFirst 10 selected uncertainty scores:")
+print(selected_scores[:10])
 
 print("\nAverage uncertainty:")
-print(uncertainty_scores.mean().item())
+print(results["entropy"].mean())

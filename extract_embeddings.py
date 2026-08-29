@@ -1,10 +1,9 @@
 import torch
 
 from data import get_dataloaders
-from model import CNN
+from model import SimpleCNN
 
 
-# Select device
 device = torch.device(
     "cuda" if torch.cuda.is_available() else "cpu"
 )
@@ -12,14 +11,22 @@ device = torch.device(
 print("Using device:", device)
 
 
-# Create the CNN model
-model = CNN(
-    num_classes=10,
-    embedding_dim=128
+# Load CIFAR-10 data
+train_loader, validation_loader, test_loader, train_dataset = get_dataloaders(
+    batch_size=64
 )
 
 
-# Load the trained model
+# Create the trained CNN architecture
+model = SimpleCNN(
+    num_classes=10,
+    dropout_p=0.3,
+    in_channels=3,
+    image_size=32
+)
+
+
+# Load trained weights
 model.load_state_dict(
     torch.load(
         "shishya_cnn.pth",
@@ -28,15 +35,7 @@ model.load_state_dict(
 )
 
 model = model.to(device)
-
-# Evaluation mode
 model.eval()
-
-
-# Load the dataset
-train_loader, validation_loader, test_loader = get_dataloaders(
-    batch_size=64
-)
 
 
 # Store embeddings and labels
@@ -44,17 +43,15 @@ all_embeddings = []
 all_labels = []
 
 
-# Extract embeddings from the training data
+# Extract penultimate-layer embeddings
 with torch.no_grad():
 
     for images, labels in train_loader:
 
         images = images.to(device)
 
-        # Extract penultimate-layer embeddings
         embeddings = model.get_embedding(images)
 
-        # Move embeddings to CPU before storing
         all_embeddings.append(
             embeddings.cpu()
         )
@@ -64,7 +61,7 @@ with torch.no_grad():
         )
 
 
-# Combine all batches
+# Combine batches
 all_embeddings = torch.cat(
     all_embeddings,
     dim=0
@@ -76,7 +73,6 @@ all_labels = torch.cat(
 )
 
 
-# Display shapes
 print("Embedding shape:", all_embeddings.shape)
 print("Labels shape:", all_labels.shape)
 
