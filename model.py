@@ -1,62 +1,137 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
-class CNN(nn.Module):
+class SimpleCNN(nn.Module):
+    """
+    Baseline CNN used by the Shishya module.
 
-    def __init__(self, num_classes=10, embedding_dim=128):
-        super(CNN, self).__init__()
+    Supports CIFAR-10, MNIST, and FashionMNIST through
+    configurable input channels and image size.
+    """
 
-        # Convolutional feature extractor
-        self.features = nn.Sequential(
+    def __init__(
+        self,
+        num_classes: int = 10,
+        dropout_p: float = 0.3,
+        in_channels: int = 1,
+        image_size: int = 28,
+    ):
+        super().__init__()
 
-            # Block 1
-            nn.Conv2d(3, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2),
+        # Channel sizes
+        c1 = 32 if in_channels == 3 else 16
+        c2 = 64 if in_channels == 3 else 32
 
-            # Block 2
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2),
+        # Hidden size of penultimate fully-connected layer
+        fc1_hidden = 256 if in_channels == 3 else 128
 
-            # Block 3
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2)
+        # Two 2x2 pooling operations
+        after_pool = image_size // 4
+
+        # Input size to FC layer
+        fc1_in = c2 * after_pool * after_pool
+
+        # Named convolution layers
+        self.conv1 = nn.Conv2d(
+            in_channels,
+            c1,
+            kernel_size=3,
+            padding=1
         )
 
-        # After 3 pooling operations:
-        # 32x32 → 16x16 → 8x8 → 4x4
-        self.flatten = nn.Flatten()
+        self.conv2 = nn.Conv2d(
+            c1,
+            c2,
+            kernel_size=3,
+            padding=1
+        )
 
-        self.feature_layer = nn.Linear(
-             128 * 4 * 4,
-             embedding_dim
-       )
+        self.pool = nn.MaxPool2d(2, 2)
 
-        # Final classifier
-        self.classifier = nn.Linear(
-            embedding_dim,
+        # Dropout for MC Dropout uncertainty
+        self.dropout = nn.Dropout(p=dropout_p)
+
+        # Penultimate feature layer
+        self.fc1 = nn.Linear(
+            fc1_in,
+            fc1_hidden
+        )
+
+        # Final classification layer
+        self.fc2 = nn.Linear(
+            fc1_hidden,
             num_classes
         )
 
+    def extract_features(self, x):
+        """
+        Extract convolutional features before the fully connected layers.
+        """
+
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+
+        return x
 
     def get_embedding(self, x):
-        """Return the 128-D penultimate-layer representation."""
+        """
+        Return the penultimate-layer representation.
+        """
 
-        x = self.features(x)
-        x = self.flatten(x)
-        x = self.feature_layer(x)
+        x = self.extract_features(x)
+
+        x = torch.flatten(x, 1)
+
+        x = F.relu(self.fc1(x))
+
+        return x
+
+    def forward(self, x):
+        """
+        Return classification logits.
+        """
+
+        x = self.extract_features(x)
+
+        x = torch.flatten(x, 1)
+
+        x = F.relu(self.fc1(x))
+
+        x = self.dropout(x)
+
+        x = self.fc2(x)
 
         return x
 
 
-    def forward(self, x):
-        """Return classification logits."""
+def enable_dropout(model: nn.Module) -> None:
+    """
+    Put the model in evaluation mode while keeping
+    Dropout layers active for MC Dropout inference.
+    """
 
-        embedding = self.get_embedding(x)
+    model.eval()
 
-        logits = self.classifier(embedding)
+    for module in model.modules():
+        if isinstance(module, nn.Dropout):
+            module.train()
 
-        return logits
+
+def get_model(
+    num_classes: int = 10,
+    dropout_p: float = 0.3,
+    in_channels: int = 1,
+    image_size: int = 28,
+) -> SimpleCNN:
+    """
+    Factory function returning a freshly initialized SimpleCNN.
+    """
+
+    return SimpleCNN(
+        num_classes=num_classes,
+        dropout_p=dropout_p,
+        in_channels=in_channels,
+        image_size=image_size,
+    )

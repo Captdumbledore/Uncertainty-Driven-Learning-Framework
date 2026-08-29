@@ -9,17 +9,16 @@ def get_dataloaders(
     validation_split=0.1,
     seed=42,
 ):
-
-    # Path to the dataset folder
+    # Path to CIFAR-10 dataset
     dataset_path = "./CIFAR-10-images-master"
 
-    # CIFAR-10 images are RGB: 3 channels
+    # CIFAR-10 normalization
     transform = transforms.Compose([
         transforms.Resize((32, 32)),
         transforms.ToTensor(),
         transforms.Normalize(
-            (0.5, 0.5, 0.5),
-            (0.5, 0.5, 0.5)
+            (0.4914, 0.4822, 0.4465),
+            (0.2023, 0.1994, 0.2010)
         )
     ])
 
@@ -29,7 +28,7 @@ def get_dataloaders(
         transform=transform
     )
 
-    # Calculate train/validation sizes
+    # Calculate split sizes
     total_size = len(full_train_dataset)
 
     validation_size = int(
@@ -38,23 +37,22 @@ def get_dataloaders(
 
     train_size = total_size - validation_size
 
-    # Fixed seed for reproducibility
+    # Reproducible split
     generator = torch.Generator().manual_seed(seed)
 
-    # Split training data
     train_dataset, validation_dataset = random_split(
         full_train_dataset,
         [train_size, validation_size],
         generator=generator
     )
 
-    # Load test data
+    # Load test images
     test_dataset = datasets.ImageFolder(
         root=os.path.join(dataset_path, "test"),
         transform=transform
     )
 
-    # Create DataLoaders
+    # DataLoaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -73,4 +71,9 @@ def get_dataloaders(
         shuffle=False
     )
 
-    return train_loader, validation_loader, test_loader
+    return (
+        train_loader,
+        validation_loader,
+        test_loader,
+        train_dataset
+    )

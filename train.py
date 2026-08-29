@@ -4,32 +4,34 @@ import torch.optim as optim
 
 
 def train_model(
-    model,
+    model: nn.Module,
     train_loader,
-    validation_loader,
-    num_epochs=10,
-    learning_rate=0.001,
+    val_loader,
+    epochs: int = 15,
+    lr: float = 0.001,
+    device="cpu",
 ):
-    
-    # Automatically use GPU if available
-    device = torch.device(
-        "cuda" if torch.cuda.is_available() else "cpu"
-    )
-
-    print("Using device:", device)
+    """
+    Train the CNN and return the trained model and training history.
+    """
 
     model = model.to(device)
 
-    # Loss function
     criterion = nn.CrossEntropyLoss()
 
-    # Optimizer
     optimizer = optim.Adam(
         model.parameters(),
-        lr=learning_rate
+        lr=lr
     )
 
-    for epoch in range(num_epochs):
+    history = {
+        "train_loss": [],
+        "train_acc": [],
+        "val_loss": [],
+        "val_acc": [],
+    }
+
+    for epoch in range(1, epochs + 1):
 
         # -------------------------
         # TRAINING
@@ -45,24 +47,21 @@ def train_model(
             images = images.to(device)
             labels = labels.to(device)
 
-            # Clear previous gradients
             optimizer.zero_grad()
 
-            # Forward pass
             outputs = model(images)
 
-            # Calculate loss
-            loss = criterion(outputs, labels)
+            loss = criterion(
+                outputs,
+                labels
+            )
 
-            # Backpropagation
             loss.backward()
 
-            # Update weights
             optimizer.step()
 
             running_loss += loss.item()
 
-            # Calculate training accuracy
             predictions = torch.argmax(
                 outputs,
                 dim=1
@@ -74,49 +73,83 @@ def train_model(
                 predictions == labels
             ).sum().item()
 
-        train_loss = running_loss / len(train_loader)
+        train_loss = (
+            running_loss / len(train_loader)
+        )
 
-        train_accuracy = 100 * correct / total
+        train_acc = (
+            correct / total
+        )
 
         # -------------------------
         # VALIDATION
         # -------------------------
         model.eval()
 
-        validation_correct = 0
-        validation_total = 0
+        val_loss = 0.0
+        val_correct = 0
+        val_total = 0
 
         with torch.no_grad():
 
-            for images, labels in validation_loader:
+            for images, labels in val_loader:
 
                 images = images.to(device)
                 labels = labels.to(device)
 
                 outputs = model(images)
 
+                loss = criterion(
+                    outputs,
+                    labels
+                )
+
+                val_loss += loss.item()
+
                 predictions = torch.argmax(
                     outputs,
                     dim=1
                 )
 
-                validation_total += labels.size(0)
+                val_total += labels.size(0)
 
-                validation_correct += (
+                val_correct += (
                     predictions == labels
                 ).sum().item()
 
-        validation_accuracy = (
-            100
-            * validation_correct
-            / validation_total
+        val_loss = (
+            val_loss / len(val_loader)
+        )
+
+        val_acc = (
+            val_correct / val_total
+        )
+
+        # -------------------------
+        # SAVE HISTORY
+        # -------------------------
+        history["train_loss"].append(
+            train_loss
+        )
+
+        history["train_acc"].append(
+            train_acc
+        )
+
+        history["val_loss"].append(
+            val_loss
+        )
+
+        history["val_acc"].append(
+            val_acc
         )
 
         print(
-            f"Epoch [{epoch + 1}/{num_epochs}] | "
+            f"Epoch [{epoch}/{epochs}] | "
             f"Train Loss: {train_loss:.4f} | "
-            f"Train Accuracy: {train_accuracy:.2f}% | "
-            f"Validation Accuracy: {validation_accuracy:.2f}%"
+            f"Train Acc: {train_acc:.4f} | "
+            f"Val Loss: {val_loss:.4f} | "
+            f"Val Acc: {val_acc:.4f}"
         )
 
-    return model
+    return model, history

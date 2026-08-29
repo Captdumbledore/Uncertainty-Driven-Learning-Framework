@@ -1,7 +1,9 @@
 from data import get_dataloaders
 
 
-train_loader, validation_loader, test_loader = get_dataloaders()
+train_loader, validation_loader, test_loader, train_dataset = get_dataloaders(
+    batch_size=64
+)
 
 images, labels = next(iter(train_loader))
 
