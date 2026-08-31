@@ -2,7 +2,11 @@ import os
 import torch
 from torch.utils.data import DataLoader, random_split
 from torchvision import datasets, transforms
-
+DATASET_META = {
+    "FashionMNIST": {"in_channels": 1, "image_size": 28},
+    "MNIST": {"in_channels": 1, "image_size": 28},
+    "CIFAR10": {"in_channels": 3, "image_size": 32},
+}
 
 def get_dataloaders(
     batch_size=64,
