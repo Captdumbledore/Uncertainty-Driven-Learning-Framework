@@ -4,9 +4,11 @@ from data import get_dataloaders
 from model import SimpleCNN
 from uncertainty import (
     mc_dropout_predict,
-    select_top_uncertain,
-    save_uncertainty_csv
+    get_selection_indices,
+    save_uncertainty_csv,
+    generate_uncertainty_report
 )
+from evaluate import evaluate_model
 
 
 # Device
@@ -41,7 +43,17 @@ model.load_state_dict(
 )
 
 model = model.to(device)
-model.eval()
+
+
+# Evaluate model
+evaluation = evaluate_model(
+    model=model,
+    test_loader=test_loader,
+    device=device
+)
+
+print("\nTest Loss:", evaluation["test_loss"])
+print("Test Accuracy:", evaluation["test_accuracy"])
 
 
 # MC Dropout prediction
@@ -54,17 +66,41 @@ results = mc_dropout_predict(
 
 
 # Select top 10% uncertain samples
-selected_indices, selected_scores = select_top_uncertain(
+selected_indices = get_selection_indices(
     results["entropy"],
-    fraction=0.10
+    top_fraction=0.10,
+    mode="highest"
 )
 
 
-# Save uncertainty results
+# Save uncertainty CSV
 save_uncertainty_csv(
     results,
-    selected_indices,
-    output_path="uncertainty_scores.csv"
+    save_path="uncertainty_scores.csv"
+)
+
+
+# CIFAR-10 class names
+class_names = [
+    "airplane",
+    "automobile",
+    "bird",
+    "cat",
+    "deer",
+    "dog",
+    "frog",
+    "horse",
+    "ship",
+    "truck"
+]
+
+
+# Generate uncertainty report
+generate_uncertainty_report(
+    results=results,
+    class_names=class_names,
+    save_path="uncertainty_report.txt",
+    top_fraction=0.10
 )
 
 
@@ -74,14 +110,7 @@ print("Confidence:", results["confidence"].shape)
 print("Entropy:", results["entropy"].shape)
 print("True labels:", results["true_labels"].shape)
 
-print("\nNumber of selected uncertain samples:")
+print("\nSelected uncertain samples:")
 print(len(selected_indices))
 
-print("\nFirst 10 selected indices:")
-print(selected_indices[:10])
-
-print("\nFirst 10 selected uncertainty scores:")
-print(selected_scores[:10])
-
-print("\nAverage uncertainty:")
-print(results["entropy"].mean())
+print("\nUncertainty pipeline completed successfully!")

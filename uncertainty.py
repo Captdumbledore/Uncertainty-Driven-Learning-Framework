@@ -1,5 +1,7 @@
+import csv
+import os
+
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn.functional as F
 
@@ -63,32 +65,26 @@ def mc_dropout_predict(
                 axis=0
             )
 
-    # Shape:
-    # (number of MC samples, number of images, number of classes)
     stochastic_probs = np.stack(
         stochastic_probs,
         axis=0
     )
 
-    # Average predictions across MC samples
     mean_probs = np.mean(
         stochastic_probs,
         axis=0
     )
 
-    # Predicted class
     predicted_classes = np.argmax(
         mean_probs,
         axis=1
     )
 
-    # Confidence
     confidence = np.max(
         mean_probs,
         axis=1
     )
 
-    # Predictive entropy
     entropy = -np.sum(
         mean_probs * np.log(
             mean_probs + 1e-8
@@ -105,73 +101,305 @@ def mc_dropout_predict(
     }
 
 
-def select_top_uncertain(
-    uncertainty_scores,
-    fraction=0.10
-):
+def get_selection_indices(
+    entropy_scores: np.ndarray,
+    top_fraction: float = 0.10,
+    mode: str = "highest",
+    seed: int = 42,
+) -> np.ndarray:
     """
-    Select the most uncertain samples.
+    Select sample indices based on entropy.
+
+    mode:
+        highest = most uncertain
+        lowest  = least uncertain
+        random  = random selection
     """
 
-    uncertainty_scores = np.asarray(
-        uncertainty_scores
-    )
-
-    n_samples = len(
-        uncertainty_scores
-    )
+    n_total = len(entropy_scores)
 
     n_select = max(
         1,
-        int(n_samples * fraction)
+        int(n_total * top_fraction)
     )
 
-    sorted_indices = np.argsort(
-        uncertainty_scores
-    )[::-1]
+    if mode == "highest":
 
-    selected_indices = sorted_indices[
-        :n_select
-    ]
+        indices = np.argsort(
+            entropy_scores
+        )[-n_select:]
 
-    selected_scores = uncertainty_scores[
-        selected_indices
-    ]
+    elif mode == "lowest":
 
-    return selected_indices, selected_scores
+        indices = np.argsort(
+            entropy_scores
+        )[:n_select]
+
+    elif mode == "random":
+
+        rng = np.random.default_rng(seed)
+
+        indices = rng.choice(
+            n_total,
+            size=n_select,
+            replace=False
+        )
+
+    else:
+
+        raise ValueError(
+            f"Unknown mode '{mode}'. "
+            "Use 'highest', 'lowest', or 'random'."
+        )
+
+    return indices
 
 
 def save_uncertainty_csv(
-    results,
-    selected_indices,
-    output_path="uncertainty_scores.csv"
-):
+    results: dict,
+    save_path: str
+) -> None:
     """
-    Save uncertainty results to a CSV file.
+    Save per-sample uncertainty analysis to CSV.
     """
 
-    df = pd.DataFrame({
-        "sample_index": np.arange(
-            len(results["entropy"])
-        ),
-        "true_label": results["true_labels"],
-        "predicted_class": results["predicted_classes"],
-        "confidence": results["confidence"],
-        "entropy": results["entropy"],
-    })
+    dir_path = os.path.dirname(save_path)
 
-    df["selected"] = False
+    if dir_path:
+        os.makedirs(
+            dir_path,
+            exist_ok=True
+        )
 
-    df.loc[
-        selected_indices,
-        "selected"
-    ] = True
-
-    df.to_csv(
-        output_path,
-        index=False
+    correct = (
+        results["true_labels"]
+        == results["predicted_classes"]
     )
+
+    with open(
+        save_path,
+        "w",
+        newline="",
+        encoding="utf-8"
+    ) as fh:
+
+        writer = csv.writer(fh)
+
+        writer.writerow([
+            "sample_id",
+            "true_label",
+            "predicted_label",
+            "confidence",
+            "predictive_entropy",
+            "correct_prediction",
+        ])
+
+        n = len(
+            results["true_labels"]
+        )
+
+        for i in range(n):
+
+            writer.writerow([
+                i,
+                int(results["true_labels"][i]),
+                int(results["predicted_classes"][i]),
+                f"{results['confidence'][i]:.6f}",
+                f"{results['entropy'][i]:.6f}",
+                bool(correct[i]),
+            ])
 
     print(
-        f"Uncertainty CSV saved to: {output_path}"
+        f"Saved uncertainty CSV ({n:,} rows) → {save_path}"
     )
+
+
+def generate_uncertainty_report(
+    results: dict,
+    class_names: list,
+    save_path: str,
+    top_fraction: float = 0.10,
+) -> str:
+    """
+    Generate a pre-retraining uncertainty analysis report.
+    """
+
+    from collections import Counter
+
+    entropy = results["entropy"]
+    true_labels = results["true_labels"]
+    predicted = results["predicted_classes"]
+
+    correct_mask = (
+        true_labels == predicted
+    )
+
+    errors = (
+        ~correct_mask
+    ).astype(int)
+
+    n_total = len(entropy)
+
+    n_select = max(
+        1,
+        int(n_total * top_fraction)
+    )
+
+    top_idx = np.argsort(
+        entropy
+    )[-n_select:]
+
+    top_correct = correct_mask[
+        top_idx
+    ]
+
+    pct_misclf = (
+        1 - top_correct.mean()
+    ) * 100
+
+    pct_already_ok = (
+        top_correct.mean()
+    ) * 100
+
+    top_labels = true_labels[
+        top_idx
+    ]
+
+    class_counts = Counter(
+        int(label)
+        for label in top_labels
+    )
+
+    corr = float(
+        np.corrcoef(
+            entropy,
+            errors
+        )[0, 1]
+    )
+
+    ent_correct = entropy[
+        correct_mask
+    ]
+
+    ent_incorrect = entropy[
+        ~correct_mask
+    ]
+
+    lines = [
+        "=" * 64,
+        "  PRE-RETRAINING UNCERTAINTY ANALYSIS REPORT",
+        "=" * 64,
+        "",
+        f"  Total samples                    : {n_total:,}",
+        f"  Accuracy                         : {correct_mask.mean() * 100:.2f}%",
+        f"  Top-{top_fraction * 100:.0f}% uncertain samples : {n_select:,}",
+        "",
+        "-" * 60,
+        "  Q1  Are the most uncertain samples misclassified?",
+        "-" * 60,
+        f"      Misclassified : {pct_misclf:.2f}%",
+        f"      Correct       : {pct_already_ok:.2f}%",
+        "",
+        "-" * 60,
+        "  Q2  Which classes appear most among uncertain samples?",
+        "-" * 60,
+    ]
+
+    for c in sorted(
+        class_counts,
+        key=lambda x: class_counts[x],
+        reverse=True
+    ):
+
+        name = (
+            class_names[c]
+            if c < len(class_names)
+            else str(c)
+        )
+
+        count = class_counts[c]
+
+        pct = (
+            count / n_select
+        ) * 100
+
+        lines.append(
+            f"      {name:<24} {count:>5} ({pct:5.1f}%)"
+        )
+
+    if corr > 0.15:
+
+        interpretation = (
+            "Positive — entropy is a meaningful "
+            "signal for prediction errors."
+        )
+
+    elif corr > 0.0:
+
+        interpretation = (
+            "Weak positive — entropy imperfectly "
+            "predicts errors."
+        )
+
+    else:
+
+        interpretation = (
+            "Near-zero or negative — entropy does "
+            "not reliably predict errors."
+        )
+
+    lines += [
+        "",
+        "-" * 60,
+        "  Q3  Correlation: entropy vs prediction error",
+        "-" * 60,
+        f"      Pearson r = {corr:.4f}",
+        f"      Interpretation: {interpretation}",
+        "",
+        "-" * 60,
+        "  Q4  Entropy by prediction correctness",
+        "-" * 60,
+    ]
+
+    if correct_mask.sum() > 0:
+
+        lines.append(
+            f"      Correct predictions   : "
+            f"{ent_correct.mean():.4f}"
+        )
+
+    if (~correct_mask).sum() > 0:
+
+        lines.append(
+            f"      Incorrect predictions : "
+            f"{ent_incorrect.mean():.4f}"
+        )
+
+    lines += [
+        "",
+        "=" * 64,
+    ]
+
+    report = "\n".join(lines)
+
+    dir_path = os.path.dirname(save_path)
+
+    if dir_path:
+        os.makedirs(
+            dir_path,
+            exist_ok=True
+        )
+
+    with open(
+        save_path,
+        "w",
+        encoding="utf-8"
+    ) as fh:
+
+        fh.write(report)
+
+    print(
+        f"Saved uncertainty report → {save_path}"
+    )
+
+    return report
