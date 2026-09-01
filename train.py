@@ -1,18 +1,54 @@
+"""
+train.py
+--------
+Standard supervised training loop — Phase 1.
+
+Responsibilities
+----------------
+- Train SimpleCNN using cross-entropy loss and Adam.
+- Track per-epoch training and validation loss and accuracy.
+- Return the trained model and history for later evaluation and plotting.
+"""
+
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
 
 def train_model(
-    model: nn.Module,
+    model:        nn.Module,
     train_loader,
     val_loader,
-    epochs: int = 15,
-    lr: float = 0.001,
-    device="cpu",
+    epochs:       int   = 15,
+    lr:           float = 0.001,
+    device              = "cpu",
 ):
     """
-    Train the CNN and return the trained model and training history.
+    Train the CNN and return the trained model and history.
+
+    Parameters
+    ----------
+    model : nn.Module
+        CNN model to train.
+    train_loader : DataLoader
+        Training data loader.
+    val_loader : DataLoader
+        Validation data loader. Used only for evaluation during training;
+        never used for augmentation or retraining.
+    epochs : int
+        Number of training epochs.
+    lr : float
+        Learning rate for Adam.
+    device : str or torch.device
+        Device used for training.
+
+    Returns
+    -------
+    model : nn.Module
+        Trained CNN.
+    history : dict
+        Per-epoch training and validation metrics.
     """
 
     model = model.to(device)
@@ -33,9 +69,7 @@ def train_model(
 
     for epoch in range(1, epochs + 1):
 
-        # -------------------------
-        # TRAINING
-        # -------------------------
+        # Training
         model.train()
 
         running_loss = 0.0
@@ -81,9 +115,7 @@ def train_model(
             correct / total
         )
 
-        # -------------------------
-        # VALIDATION
-        # -------------------------
+        # Validation
         model.eval()
 
         val_loss = 0.0
@@ -117,17 +149,13 @@ def train_model(
                     predictions == labels
                 ).sum().item()
 
-        val_loss = (
-            val_loss / len(val_loader)
-        )
+        val_loss /= len(val_loader)
 
         val_acc = (
             val_correct / val_total
         )
 
-        # -------------------------
-        # SAVE HISTORY
-        # -------------------------
+        # Save history
         history["train_loss"].append(
             train_loss
         )
@@ -145,11 +173,9 @@ def train_model(
         )
 
         print(
-            f"Epoch [{epoch}/{epochs}] | "
-            f"Train Loss: {train_loss:.4f} | "
-            f"Train Acc: {train_acc:.4f} | "
-            f"Val Loss: {val_loss:.4f} | "
-            f"Val Acc: {val_acc:.4f}"
+            f"    Epoch {epoch:>2}/{epochs}  "
+            f"| Train Loss {train_loss:.4f}  Acc {train_acc:.4f}"
+            f"  | Val Loss {val_loss:.4f}  Acc {val_acc:.4f}"
         )
 
     return model, history

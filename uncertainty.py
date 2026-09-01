@@ -1,9 +1,27 @@
+"""
+uncertainty.py
+--------------
+Monte Carlo Dropout uncertainty estimation and sample selection.
+
+MC Dropout performs multiple stochastic forward passes with dropout
+enabled. Predictive entropy is used as the uncertainty measure.
+
+High entropy indicates uncertain predictions, while low entropy
+indicates confident predictions.
+
+Outputs include per-sample uncertainty CSV files and a diagnostic
+pre-retraining uncertainty report.
+"""
+
+
 import csv
 import os
+from collections import Counter
 
 import numpy as np
 import torch
 import torch.nn.functional as F
+from tqdm import tqdm
 
 from model import enable_dropout
 
@@ -11,28 +29,61 @@ from model import enable_dropout
 def mc_dropout_predict(
     model,
     data_loader,
+    n_samples: int = 30,
     device="cpu",
-    n_samples=30,
-):
+) -> dict:
     """
     Perform Monte Carlo Dropout prediction.
+
+    Parameters
+    ----------
+    model : nn.Module
+        Trained CNN model.
+    data_loader : DataLoader
+        Data used for uncertainty estimation.
+    n_samples : int
+        Number of stochastic forward passes.
+    device : str or torch.device
+        Computation device.
+
+    Returns
+    -------
+    dict
+        Mean probabilities, predicted classes, confidence,
+        predictive entropy, and true labels.
     """
 
     model = model.to(device)
 
-    stochastic_probs = []
+    # Collect labels once before stochastic inference.
     true_labels = []
 
-    for sample in range(n_samples):
+    for _, labels in data_loader:
+        true_labels.append(
+            labels.numpy()
+        )
+
+    true_labels = np.concatenate(
+        true_labels,
+        axis=0
+    )
+
+    stochastic_probs = []
+
+    for _ in tqdm(
+        range(n_samples),
+        desc="    MC Dropout passes",
+        ncols=65,
+        leave=False,
+    ):
 
         enable_dropout(model)
 
         batch_probs = []
-        batch_labels = []
 
         with torch.no_grad():
 
-            for images, labels in data_loader:
+            for images, _ in data_loader:
 
                 images = images.to(device)
 
@@ -47,11 +98,6 @@ def mc_dropout_predict(
                     probabilities.cpu().numpy()
                 )
 
-                if sample == 0:
-                    batch_labels.append(
-                        labels.numpy()
-                    )
-
         stochastic_probs.append(
             np.concatenate(
                 batch_probs,
@@ -59,17 +105,14 @@ def mc_dropout_predict(
             )
         )
 
-        if sample == 0:
-            true_labels = np.concatenate(
-                batch_labels,
-                axis=0
-            )
-
+    # Stack MC predictions:
+    # (MC samples, images, classes)
     stochastic_probs = np.stack(
         stochastic_probs,
         axis=0
     )
 
+    # Average predictions across MC samples.
     mean_probs = np.mean(
         stochastic_probs,
         axis=0
@@ -86,10 +129,19 @@ def mc_dropout_predict(
     )
 
     entropy = -np.sum(
-        mean_probs * np.log(
-            mean_probs + 1e-8
-        ),
+        mean_probs
+        * np.log(mean_probs + 1e-8),
         axis=1
+    )
+
+    # Reset model to standard evaluation mode.
+    model.eval()
+
+    print(
+        f"    MC Dropout complete — "
+        f"N={len(true_labels):,}  "
+        f"mean entropy={entropy.mean():.4f}  "
+        f"mean confidence={confidence.mean():.4f}"
     )
 
     return {
@@ -116,7 +168,9 @@ def get_selection_indices(
         random  = random selection
     """
 
-    n_total = len(entropy_scores)
+    n_total = len(
+        entropy_scores
+    )
 
     n_select = max(
         1,
@@ -137,7 +191,9 @@ def get_selection_indices(
 
     elif mode == "random":
 
-        rng = np.random.default_rng(seed)
+        rng = np.random.default_rng(
+            seed
+        )
 
         indices = rng.choice(
             n_total,
@@ -163,7 +219,9 @@ def save_uncertainty_csv(
     Save per-sample uncertainty analysis to CSV.
     """
 
-    dir_path = os.path.dirname(save_path)
+    dir_path = os.path.dirname(
+        save_path
+    )
 
     if dir_path:
         os.makedirs(
@@ -210,7 +268,8 @@ def save_uncertainty_csv(
             ])
 
     print(
-        f"Saved uncertainty CSV ({n:,} rows) → {save_path}"
+        f"    Saved uncertainty CSV "
+        f"({n:,} rows) → {save_path}"
     )
 
 
@@ -223,8 +282,6 @@ def generate_uncertainty_report(
     """
     Generate a pre-retraining uncertainty analysis report.
     """
-
-    from collections import Counter
 
     entropy = results["entropy"]
     true_labels = results["true_labels"]
@@ -290,19 +347,19 @@ def generate_uncertainty_report(
         "  PRE-RETRAINING UNCERTAINTY ANALYSIS REPORT",
         "=" * 64,
         "",
-        f"  Total samples                    : {n_total:,}",
-        f"  Accuracy                         : {correct_mask.mean() * 100:.2f}%",
+        f"  Total training samples          : {n_total:,}",
+        f"  MC-Dropout accuracy on train set: {correct_mask.mean() * 100:.2f}%",
         f"  Top-{top_fraction * 100:.0f}% uncertain samples : {n_select:,}",
         "",
-        "-" * 60,
+        "─" * 60,
         "  Q1  Are the most uncertain samples misclassified?",
-        "-" * 60,
+        "─" * 60,
         f"      Misclassified : {pct_misclf:.2f}%",
         f"      Correct       : {pct_already_ok:.2f}%",
         "",
-        "-" * 60,
+        "─" * 60,
         "  Q2  Which classes appear most among uncertain samples?",
-        "-" * 60,
+        "─" * 60,
     ]
 
     for c in sorted(
@@ -324,7 +381,8 @@ def generate_uncertainty_report(
         ) * 100
 
         lines.append(
-            f"      {name:<24} {count:>5} ({pct:5.1f}%)"
+            f"      {name:<24} "
+            f"{count:>5} ({pct:5.1f}%)"
         )
 
     if corr > 0.15:
@@ -350,29 +408,31 @@ def generate_uncertainty_report(
 
     lines += [
         "",
-        "-" * 60,
-        "  Q3  Correlation: entropy vs prediction error",
-        "-" * 60,
-        f"      Pearson r = {corr:.4f}",
+        "─" * 60,
+        "  Q3  Correlation: predictive entropy ↔ prediction error",
+        "─" * 60,
+        f"      Pearson r(entropy, error) = {corr:.4f}",
         f"      Interpretation: {interpretation}",
         "",
-        "-" * 60,
-        "  Q4  Entropy by prediction correctness",
-        "-" * 60,
+        "─" * 60,
+        "  Q4  Entropy statistics by prediction correctness",
+        "─" * 60,
     ]
 
     if correct_mask.sum() > 0:
 
         lines.append(
-            f"      Correct predictions   : "
-            f"{ent_correct.mean():.4f}"
+            f"      Mean entropy | correct predictions   : "
+            f"{ent_correct.mean():.4f}  "
+            f"(n={correct_mask.sum():,})"
         )
 
     if (~correct_mask).sum() > 0:
 
         lines.append(
-            f"      Incorrect predictions : "
-            f"{ent_incorrect.mean():.4f}"
+            f"      Mean entropy | incorrect predictions : "
+            f"{ent_incorrect.mean():.4f}  "
+            f"(n={(~correct_mask).sum():,})"
         )
 
     lines += [
@@ -380,9 +440,13 @@ def generate_uncertainty_report(
         "=" * 64,
     ]
 
-    report = "\n".join(lines)
+    report = "\n".join(
+        lines
+    )
 
-    dir_path = os.path.dirname(save_path)
+    dir_path = os.path.dirname(
+        save_path
+    )
 
     if dir_path:
         os.makedirs(
@@ -399,7 +463,7 @@ def generate_uncertainty_report(
         fh.write(report)
 
     print(
-        f"Saved uncertainty report → {save_path}"
+        f"    Saved uncertainty report → {save_path}"
     )
 
     return report
