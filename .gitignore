@@ -1,0 +1,21 @@
+# Virtual environments
+venv/
+.venv/
+myenv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Datasets
+CIFAR-10-images-master/
+FashionMNIST/
+
+# Trained model weights
+*.pth
+*.pt
+
+# Generated outputs
+outputs_cifar10/
