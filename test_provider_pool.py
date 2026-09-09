@@ -7,6 +7,7 @@ from experience_providers import (
     RetrievalProvider
 )
 from experience_pool import ExperiencePool
+from test_objective import LearningObjective
 
 
 def main():
@@ -35,13 +36,13 @@ def main():
 
     retrieval_result = retrieval_provider.provide(
         sample_idx=0,
-        objective=None,
+        objective=LearningObjective.IMPROVE_CLASS_SEPARATION,
         true_label=0
     )
 
     counterexample_result = counterexample_provider.provide(
         sample_idx=0,
-        objective=None,
+        objective=LearningObjective.IMPROVE_CLASS_SEPARATION,
         true_class=0,
         confused_class=1
     )
