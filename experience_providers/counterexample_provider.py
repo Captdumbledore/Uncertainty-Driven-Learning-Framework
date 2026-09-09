@@ -1,10 +1,12 @@
 import numpy as np
-from typing import List
+from typing import List, TYPE_CHECKING
 
-from .base_provider import ExperienceProvider
+if TYPE_CHECKING:
+    from akrm.objective import LearningObjective
 
+from .base_provider import BaseProvider
 
-class CounterexampleProvider(ExperienceProvider):
+class CounterexampleProvider(BaseProvider):
     """
     Retrieves examples from both the true and confused classes
     to strengthen class separation.
@@ -23,7 +25,7 @@ class CounterexampleProvider(ExperienceProvider):
     def provide(
         self,
         sample_idx: int,
-        objective,
+        objective: "LearningObjective",
         true_class: int = None,
         confused_class: int = None
     ) -> List[int]:
@@ -59,9 +61,8 @@ class CounterexampleProvider(ExperienceProvider):
 
             class_mask = (self.train_labels == class_id)
 
-            # Do not retrieve the uncertain sample itself.
-            class_mask[sample_idx] = False
-
+            if class_id == true_class:
+                class_mask[sample_idx] = False
             class_indices = np.where(class_mask)[0]
 
             # No candidates available for this class.

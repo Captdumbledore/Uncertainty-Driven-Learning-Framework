@@ -1,9 +1,13 @@
 import numpy as np
-from typing import List
-from .base_provider import ExperienceProvider
+from typing import List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from akrm.objective import LearningObjective
+
+from .base_provider import BaseProvider
 
 
-class RetrievalProvider(ExperienceProvider):
+class RetrievalProvider(BaseProvider):
     """
     Retrieves diverse real samples from the dataset spanning the full visual
     diversity of the true class.
@@ -22,7 +26,7 @@ class RetrievalProvider(ExperienceProvider):
     def provide(
         self,
         sample_idx: int,
-        objective,
+        objective: "LearningObjective",
         true_label: int = None
     ) -> List[int]:
 

@@ -1,3 +1,3 @@
-from .base_provider import ExperienceProvider
+from .base_provider import BaseProvider
 from .counterexample_provider import CounterexampleProvider
 from .retrieval_provider import RetrievalProvider
