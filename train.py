@@ -5,12 +5,11 @@ Standard supervised training loop — Phase 1.
 
 Responsibilities
 ----------------
-  - Train SimpleCNN on the training DataLoader using cross-entropy + Adam.
-  - Track per-epoch train/val loss and accuracy.
-  - Print a concise progress line each epoch.
-
-Returns the trained model and a history dict used later for plotting.
+- Train SimpleCNN using cross-entropy loss and Adam.
+- Track per-epoch training and validation loss and accuracy.
+- Return the trained model and history for later evaluation and plotting.
 """
+
 
 import torch
 import torch.nn as nn
@@ -26,83 +25,157 @@ def train_model(
     device              = "cpu",
 ):
     """
-    Standard supervised training.
+    Train the CNN and return the trained model and history.
 
     Parameters
     ----------
-    model        : Uninitialised SimpleCNN (moved to device internally)
-    train_loader : DataLoader for the training subset
-    val_loader   : DataLoader for the validation subset (monitoring only —
-                   NEVER used for augmentation or retraining)
-    epochs       : Number of training epochs
-    lr           : Adam learning rate
-    device       : torch.device or string ("cpu" / "cuda")
+    model : nn.Module
+        CNN model to train.
+    train_loader : DataLoader
+        Training data loader.
+    val_loader : DataLoader
+        Validation data loader. Used only for evaluation during training;
+        never used for augmentation or retraining.
+    epochs : int
+        Number of training epochs.
+    lr : float
+        Learning rate for Adam.
+    device : str or torch.device
+        Device used for training.
 
     Returns
     -------
-    model   : Trained model (on the same device)
-    history : Dict with keys "train_loss", "train_acc", "val_loss", "val_acc"
-              Each value is a list of per-epoch floats.
+    model : nn.Module
+        Trained CNN.
+    history : dict
+        Per-epoch training and validation metrics.
     """
-    model     = model.to(device)
+
+    model = model.to(device)
+
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    optimizer = optim.Adam(
+        model.parameters(),
+        lr=lr
+    )
 
     history = {
-        "train_loss": [], "train_acc": [],
-        "val_loss":   [], "val_acc":   [],
+        "train_loss": [],
+        "train_acc": [],
+        "val_loss": [],
+        "val_acc": [],
     }
 
     for epoch in range(1, epochs + 1):
 
-        # ── Training pass ────────────────────────────────────────────────
+        # Training
         model.train()
-        train_loss = 0.0
-        correct = total = 0
+
+        running_loss = 0.0
+        correct = 0
+        total = 0
 
         for images, labels in train_loader:
-            images, labels = images.to(device), labels.to(device)
+
+            images = images.to(device)
+            labels = labels.to(device)
+
             optimizer.zero_grad()
+
             outputs = model(images)
-            loss    = criterion(outputs, labels)
+
+            loss = criterion(
+                outputs,
+                labels
+            )
+
             loss.backward()
+
             optimizer.step()
 
-            train_loss += loss.item()
-            _, preds    = outputs.max(1)
-            correct    += preds.eq(labels).sum().item()
-            total      += labels.size(0)
+            running_loss += loss.item()
 
-        # ── Validation pass ──────────────────────────────────────────────
+            predictions = torch.argmax(
+                outputs,
+                dim=1
+            )
+
+            total += labels.size(0)
+
+            correct += (
+                predictions == labels
+            ).sum().item()
+
+        train_loss = (
+            running_loss / len(train_loader)
+        )
+
+        train_acc = (
+            correct / total
+        )
+
+        # Validation
         model.eval()
+
         val_loss = 0.0
-        val_correct = val_total = 0
+        val_correct = 0
+        val_total = 0
 
         with torch.no_grad():
+
             for images, labels in val_loader:
-                images, labels = images.to(device), labels.to(device)
-                outputs      = model(images)
-                loss         = criterion(outputs, labels)
-                val_loss    += loss.item()
-                _, preds     = outputs.max(1)
-                val_correct += preds.eq(labels).sum().item()
-                val_total   += labels.size(0)
 
-        # ── Record ───────────────────────────────────────────────────────
-        t_loss = train_loss / len(train_loader)
-        t_acc  = correct    / total
-        v_loss = val_loss   / len(val_loader)
-        v_acc  = val_correct / val_total
+                images = images.to(device)
+                labels = labels.to(device)
 
-        history["train_loss"].append(t_loss)
-        history["train_acc" ].append(t_acc)
-        history["val_loss"  ].append(v_loss)
-        history["val_acc"   ].append(v_acc)
+                outputs = model(images)
+
+                loss = criterion(
+                    outputs,
+                    labels
+                )
+
+                val_loss += loss.item()
+
+                predictions = torch.argmax(
+                    outputs,
+                    dim=1
+                )
+
+                val_total += labels.size(0)
+
+                val_correct += (
+                    predictions == labels
+                ).sum().item()
+
+        val_loss /= len(val_loader)
+
+        val_acc = (
+            val_correct / val_total
+        )
+
+        # Save history
+        history["train_loss"].append(
+            train_loss
+        )
+
+        history["train_acc"].append(
+            train_acc
+        )
+
+        history["val_loss"].append(
+            val_loss
+        )
+
+        history["val_acc"].append(
+            val_acc
+        )
 
         print(
             f"    Epoch {epoch:>2}/{epochs}  "
-            f"| Train Loss {t_loss:.4f}  Acc {t_acc:.4f}"
-            f"  | Val Loss {v_loss:.4f}  Acc {v_acc:.4f}"
+            f"| Train Loss {train_loss:.4f}  Acc {train_acc:.4f}"
+            f"  | Val Loss {val_loss:.4f}  Acc {val_acc:.4f}"
         )
 
     return model, history
