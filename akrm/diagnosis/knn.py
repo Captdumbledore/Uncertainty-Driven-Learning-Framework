@@ -38,9 +38,9 @@ def calculate_diagnosis_stats(neighbor_labels, distances):
     """
 
     _, counts = np.unique(
-    neighbor_labels,
-    return_counts=True
-   )
+       neighbor_labels,
+       return_counts=True
+       )
 
     majority_count = np.max(counts)
 

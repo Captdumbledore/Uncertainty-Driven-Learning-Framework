@@ -1,54 +1,88 @@
-def select_action(diagnosis):
-    """
-    Select an appropriate learning action
-    based on the diagnosed knowledge gap.
-    """
+from enum import Enum
 
-    if diagnosis == "Boundary Confusion":
-        action = "Review confusing concepts"
+from .gap_types import KnowledgeGapType
 
-    elif diagnosis == "Outlier":
-        action = "Study the concept from basics"
 
-    else:
-        action = "Continue normal learning"
+class ProviderType(str, Enum):
+    RETRIEVAL = "retrieval"
+    COUNTEREXAMPLE = "counterexample"
+    CONTEXTUAL = "contextual"
+    SYNTHETIC = "synthetic"
+    EXTERNAL = "external"
 
-    return {
-        "diagnosis": diagnosis,
-        "action": action
-    }
 
-def create_learning_plan(
-    query_embedding,
-    embeddings,
-    labels,
-    k=5,
-    disagreement_threshold=0.25,
-    outlier_threshold=5.0
-):
-    """
-    Diagnose a query embedding and select
-    an appropriate learning action.
-    """
+class LearningObjective(str, Enum):
+    IMPROVE_CLASS_SEPARATION = "improve_class_separation"
+    INCREASE_INTRA_CLASS_DIVERSITY = "increase_intra_class_diversity"
+    STRENGTHEN_CONCEPT_UNDERSTANDING = "strengthen_concept_understanding"
+    IMPROVE_ROBUSTNESS = "improve_robustness"
+    CALIBRATE_CONFIDENCE = "calibrate_confidence"
 
-    from .knn import diagnose_query
 
-    diagnosis_result = diagnose_query(
-        query_embedding,
-        embeddings,
-        labels,
-        k=k,
-        disagreement_threshold=disagreement_threshold,
-        outlier_threshold=outlier_threshold
-    )
+class LearningObjectiveGenerator:
 
-    plan = select_action(
-        diagnosis_result["diagnosis"]
-    )
+    def generate(
+        self,
+        gap_type: KnowledgeGapType,
+    ) -> LearningObjective:
 
-    return {
-        "diagnosis": diagnosis_result["diagnosis"],
-        "action": plan["action"],
-        "disagreement": diagnosis_result["disagreement"],
-        "average_distance": diagnosis_result["average_distance"]
-    }
+        mapping = {
+            KnowledgeGapType.DECISION_BOUNDARY_CONFUSION:
+                LearningObjective.IMPROVE_CLASS_SEPARATION,
+
+            KnowledgeGapType.SPARSE_CONCEPT_REPRESENTATION:
+                LearningObjective.INCREASE_INTRA_CLASS_DIVERSITY,
+
+            KnowledgeGapType.GENERAL_UNCERTAINTY:
+                LearningObjective.STRENGTHEN_CONCEPT_UNDERSTANDING,
+
+            KnowledgeGapType.OOD_CONCEPT:
+                LearningObjective.IMPROVE_ROBUSTNESS,
+
+            KnowledgeGapType.LOW_CONFIDENCE_CORRECT:
+                LearningObjective.CALIBRATE_CONFIDENCE,
+        }
+
+        return mapping.get(
+            gap_type,
+            LearningObjective.STRENGTHEN_CONCEPT_UNDERSTANDING,
+        )
+
+
+class KnowledgeGuidedExperiencePlanner:
+
+    def __init__(self, policy_type: str = "heuristic"):
+        self.policy_type = policy_type
+        self.objective_generator = LearningObjectiveGenerator()
+
+    def select_strategy(
+        self,
+        gap_type: KnowledgeGapType,
+        margin: float = 1.0,
+    ) -> ProviderType:
+
+        objective = self.objective_generator.generate(gap_type)
+
+        if self.policy_type == "random":
+            if margin < 0.5:
+                return ProviderType.COUNTEREXAMPLE
+            return ProviderType.RETRIEVAL
+
+        if objective == LearningObjective.IMPROVE_CLASS_SEPARATION:
+            if margin < 0.10:
+                return ProviderType.COUNTEREXAMPLE
+            return ProviderType.SYNTHETIC
+
+        if objective == LearningObjective.INCREASE_INTRA_CLASS_DIVERSITY:
+            return ProviderType.CONTEXTUAL
+
+        if objective == LearningObjective.STRENGTHEN_CONCEPT_UNDERSTANDING:
+            return ProviderType.RETRIEVAL
+
+        if objective == LearningObjective.IMPROVE_ROBUSTNESS:
+            return ProviderType.CONTEXTUAL
+
+        if objective == LearningObjective.CALIBRATE_CONFIDENCE:
+            return ProviderType.RETRIEVAL
+
+        return ProviderType.RETRIEVAL

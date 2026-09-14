@@ -4,306 +4,287 @@ from akrm.diagnosis.knn import (
     find_knn,
     diagnose_neighbors,
     diagnose_query,
-    calculate_diagnosis_stats
-)
-from akrm.diagnosis.planner import select_action,create_learning_plan
-
-
-
-# Training embeddings
-embeddings = np.array([
-    [1.0, 1.0],
-    [1.2, 1.1],
-    [5.0, 5.0],
-    [5.2, 5.1],
-    [9.0, 9.0]
-])
-
-# Corresponding class labels
-labels = np.array([
-    0,
-    0,
-    1,
-    1,
-    2
-])
-
-# Query embedding
-query = np.array([1.1, 1.0])
-
-# Find 3 nearest neighbors
-indices, distances, neighbor_labels = find_knn(
-    query,
-    embeddings,
-    labels,
-    k=3
+    calculate_diagnosis_stats,
 )
 
-print("Neighbor indices:", indices)
-print("Neighbor distances:", distances)
-print("Neighbor labels:", neighbor_labels)
+from akrm.diagnosis.planner import (
+    ProviderType,
+    LearningObjective,
+    LearningObjectiveGenerator,
+    KnowledgeGuidedExperiencePlanner,
+)
 
-print("\nTesting invalid k:")
+from akrm.diagnosis.gap_types import KnowledgeGapType
 
-try:
-    find_knn(query, embeddings, labels, k=10)
-except ValueError as e:
-    print("Error caught:", e)
 
-print("\nTesting mismatched labels:")
+def main():
 
-wrong_labels = np.array([0, 1, 0])
+    # ---------------------------------------------------------
+    # Basic K-NN test
+    # ---------------------------------------------------------
 
-try:
-    find_knn(
+    embeddings = np.array([
+        [1.0, 1.0],
+        [1.2, 1.1],
+        [5.0, 5.0],
+        [5.2, 5.1],
+        [9.0, 9.0]
+    ])
+
+    labels = np.array([
+        0,
+        0,
+        1,
+        1,
+        2
+    ])
+
+    query = np.array([1.1, 1.0])
+
+    indices, distances, neighbor_labels = find_knn(
         query,
         embeddings,
-        wrong_labels,
+        labels,
         k=3
     )
-except ValueError as e:
-    print("Error caught:", e)
-print("\nControlled Boundary Example:")
 
-boundary_embeddings = np.array([
-    [0.0, 0.0],
-    [0.1, 0.0],
-    [0.0, 0.1],
-    [1.0, 1.0],
-    [1.1, 1.0],
-    [1.0, 1.1]
-])
+    assert len(indices) == 3
+    assert len(distances) == 3
+    assert len(neighbor_labels) == 3
+    assert indices[0] == 0
 
-boundary_labels = np.array([
-    0,
-    0,
-    0,
-    1,
-    1,
-    1
-])
+    print("Neighbor indices:", indices)
+    print("Neighbor distances:", distances)
+    print("Neighbor labels:", neighbor_labels)
 
-boundary_query = np.array([0.5, 0.5])
+    # ---------------------------------------------------------
+    # Invalid k
+    # ---------------------------------------------------------
 
-indices, distances, neighbor_labels = find_knn(
-    boundary_query,
-    boundary_embeddings,
-    boundary_labels,
-    k=4
-)
+    print("\nTesting invalid k:")
 
-print("Boundary neighbor labels:", neighbor_labels)
-print("Boundary neighbor distances:", distances)
+    try:
+        find_knn(query, embeddings, labels, k=10)
+        assert False, "Expected ValueError for invalid k"
+    except ValueError as e:
+        print("Error caught:", e)
 
-unique, counts = np.unique(
-    neighbor_labels,
-    return_counts=True
-)
+    # ---------------------------------------------------------
+    # Mismatched labels
+    # ---------------------------------------------------------
 
-majority_count = np.max(counts)
+    print("\nTesting mismatched labels:")
 
-disagreement = (
-    len(neighbor_labels) - majority_count
-) / len(neighbor_labels)
+    wrong_labels = np.array([0, 1, 0])
 
-print("Majority neighbor count:", majority_count)
-print("Disagreement:", disagreement)
-if disagreement >= 0.25:
-    print("Diagnosis: Boundary Confusion")
-else:
-    print("Diagnosis: Not Boundary Confusion")
+    try:
+        find_knn(
+            query,
+            embeddings,
+            wrong_labels,
+            k=3
+        )
+        assert False, "Expected ValueError for mismatched labels"
+    except ValueError as e:
+        print("Error caught:", e)
+
+    # ---------------------------------------------------------
+    # Boundary Confusion
+    # ---------------------------------------------------------
+
+    print("\nControlled Boundary Example:")
+
+    boundary_embeddings = np.array([
+        [0.0, 0.0],
+        [0.1, 0.0],
+        [0.0, 0.1],
+        [1.0, 1.0],
+        [1.1, 1.0],
+        [1.0, 1.1]
+    ])
+
+    boundary_labels = np.array([
+        0,
+        0,
+        0,
+        1,
+        1,
+        1
+    ])
+
+    boundary_query = np.array([0.5, 0.5])
+
+    indices, distances, neighbor_labels = find_knn(
+        boundary_query,
+        boundary_embeddings,
+        boundary_labels,
+        k=4
+    )
+
+    print("Boundary neighbor labels:", neighbor_labels)
+    print("Boundary neighbor distances:", distances)
+
+    disagreement, average_distance = calculate_diagnosis_stats(
+        neighbor_labels,
+        distances
+    )
+
+    print("Disagreement:", disagreement)
+
+    boundary_diagnosis = diagnose_neighbors(
+        neighbor_labels,
+        distances
+    )
+
+    print("Diagnosis:", boundary_diagnosis)
+
+    assert boundary_diagnosis == "Boundary Confusion"
+    assert disagreement == 0.25
+
+    # ---------------------------------------------------------
+    # Outlier
+    # ---------------------------------------------------------
 
     print("\nControlled Outlier Example:")
 
-outlier_embeddings = np.array([
-    [0.0, 0.0],
-    [0.1, 0.0],
-    [0.0, 0.1],
-    [1.0, 1.0],
-    [1.1, 1.0],
-    [1.0, 1.1]
-])
+    outlier_query = np.array([10.0, 10.0])
 
-outlier_labels = np.array([
-    0,
-    0,
-    0,
-    1,
-    1,
-    1
-])
+    indices, distances, neighbor_labels = find_knn(
+        outlier_query,
+        boundary_embeddings,
+        boundary_labels,
+        k=3
+    )
 
-outlier_query = np.array([10.0, 10.0])
+    average_distance = np.mean(distances)
 
-indices, distances, neighbor_labels = find_knn(
-    outlier_query,
-    outlier_embeddings,
-    outlier_labels,
-    k=3
-)
+    print("Outlier neighbor labels:", neighbor_labels)
+    print("Outlier neighbor distances:", distances)
+    print("Average neighbor distance:", average_distance)
 
-print("Outlier neighbor labels:", neighbor_labels)
-print("Outlier neighbor distances:", distances)
+    outlier_diagnosis = diagnose_neighbors(
+        neighbor_labels,
+        distances
+    )
 
-average_distance = np.mean(distances)
+    print("Diagnosis:", outlier_diagnosis)
 
-print("Average neighbor distance:", average_distance)
-if average_distance > 5:
-    print("Diagnosis: Outlier")
-else:
-    print("Diagnosis: Not Outlier")
+    assert outlier_diagnosis == "Outlier"
+    assert average_distance > 5.0
 
-print("\nTesting Diagnosis Function:")
+    # ---------------------------------------------------------
+    # Normal diagnosis
+    # ---------------------------------------------------------
 
-diagnosis = diagnose_neighbors(
-    neighbor_labels,
-    distances
-)
+    print("\nTesting Normal Diagnosis Function:")
 
-print("Final diagnosis:", diagnosis)
-print("\nTesting Boundary Diagnosis Function:")
+    normal_diagnosis = diagnose_neighbors(
+        np.array([0, 0, 0, 0]),
+        np.array([
+            0.1,
+            0.2,
+            0.15,
+            0.18
+        ])
+    )
 
-boundary_diagnosis = diagnose_neighbors(
-    np.array([0, 0, 0, 1]),
-    np.array([
-        0.64031242,
-        0.64031242,
-        0.70710678,
-        0.70710678
-    ])
-)
+    print("Normal diagnosis:", normal_diagnosis)
 
-print("Boundary diagnosis:", boundary_diagnosis)
-print("\nTesting Normal Diagnosis Function:")
+    assert normal_diagnosis == "Normal"
 
-normal_diagnosis = diagnose_neighbors(
-    np.array([0, 0, 0, 0]),
-    np.array([
-        0.1,
-        0.2,
-        0.15,
-        0.18
-    ])
-)
+    # ---------------------------------------------------------
+    # Complete query diagnosis
+    # ---------------------------------------------------------
 
-print("Normal diagnosis:", normal_diagnosis)
+    print("\nTesting Complete Query Diagnosis:")
 
-print("\nTesting Complete Query Diagnosis:")
+    query_diagnosis = diagnose_query(
+        boundary_query,
+        boundary_embeddings,
+        boundary_labels,
+        k=4
+    )
 
-query_diagnosis = diagnose_query(
-    boundary_query,
-    boundary_embeddings,
-    boundary_labels,
-    k=4
-)
-print("Query diagnosis:", query_diagnosis["diagnosis"])
-print("Neighbor labels:", query_diagnosis["neighbor_labels"])
-print("Neighbor distances:", query_diagnosis["neighbor_distances"])
+    print("Query diagnosis:", query_diagnosis["diagnosis"])
+    print("Neighbor labels:", query_diagnosis["neighbor_labels"])
+    print("Neighbor distances:", query_diagnosis["neighbor_distances"])
 
-print("\nTesting Diagnosis Statistics:")
+    assert query_diagnosis["diagnosis"] == "Boundary Confusion"
+    assert len(query_diagnosis["neighbor_labels"]) == 4
 
-disagreement, average_distance = calculate_diagnosis_stats(
-    np.array([0, 0, 0, 1]),
-    np.array([
-        0.64031242,
-        0.64031242,
-        0.70710678,
-        0.70710678
-    ])
-)
+    # ---------------------------------------------------------
+    # Diagnosis statistics
+    # ---------------------------------------------------------
 
-print("Disagreement:", disagreement)
-print("Average distance:", average_distance)
-print("Disagreement:", query_diagnosis["disagreement"])
-print("Average distance:", query_diagnosis["average_distance"])
+    print("\nTesting Diagnosis Statistics:")
+
+    disagreement, average_distance = calculate_diagnosis_stats(
+        np.array([0, 0, 0, 1]),
+        np.array([
+            0.64031242,
+            0.64031242,
+            0.70710678,
+            0.70710678
+        ])
+    )
+
+    print("Disagreement:", disagreement)
+    print("Average distance:", average_distance)
+
+    assert disagreement == 0.25
+    assert average_distance > 0.0
+
+    # ---------------------------------------------------------
+    # Knowledge-Guided Planner
+    # ---------------------------------------------------------
+
+    print("\nTesting Knowledge-Guided Planner:")
+
+    objective_generator = LearningObjectiveGenerator()
+
+    boundary_objective = objective_generator.generate(
+        KnowledgeGapType.DECISION_BOUNDARY_CONFUSION
+    )
+
+    print("Boundary objective:", boundary_objective)
+
+    assert (
+        boundary_objective
+        == LearningObjective.IMPROVE_CLASS_SEPARATION
+    )
+
+    outlier_objective = objective_generator.generate(
+        KnowledgeGapType.OOD_CONCEPT
+    )
+
+    print("OOD objective:", outlier_objective)
+
+    assert (
+        outlier_objective
+        == LearningObjective.IMPROVE_ROBUSTNESS
+    )
+
+    planner = KnowledgeGuidedExperiencePlanner()
+
+    boundary_strategy = planner.select_strategy(
+        KnowledgeGapType.DECISION_BOUNDARY_CONFUSION,
+        margin=0.05
+    )
+
+    print("Boundary strategy:", boundary_strategy)
+
+    assert boundary_strategy == ProviderType.COUNTEREXAMPLE
+
+    normal_strategy = planner.select_strategy(
+        KnowledgeGapType.GENERAL_UNCERTAINTY
+    )
+
+    print("General uncertainty strategy:", normal_strategy)
+
+    assert normal_strategy == ProviderType.RETRIEVAL
+
+    print("\nAll K-NN and planner tests passed!")
 
 
-
-
-print("\nTesting Knowledge-Guided Planner:")
-
-boundary_action = select_action("Boundary Confusion")
-print("Boundary result:", boundary_action)
-
-outlier_action = select_action("Outlier")
-print("Outlier result:", outlier_action)
-
-normal_action = select_action("Normal")
-print("Normal result:", normal_action)
-
-print("\nTesting Complete Learning Plan:")
-
-learning_plan = create_learning_plan(
-    boundary_query,
-    boundary_embeddings,
-    boundary_labels,
-    k=4
-)
-
-print("Learning plan:", learning_plan)
-
-print("\nTesting with 256-dimensional embeddings:")
-
-realistic_embeddings = np.random.rand(20, 256)
-realistic_labels = np.array([
-    0, 0, 0, 0, 1,
-    1, 1, 1, 2, 2,
-    2, 2, 3, 3, 3,
-    4, 4, 4, 5, 5
-])
-
-query_embedding = np.random.rand(256)
-
-result = diagnose_query(
-    query_embedding,
-    realistic_embeddings,
-    realistic_labels,
-    k=5
-)
-
-print("Diagnosis:", result["diagnosis"])
-print("Neighbor labels:", result["neighbor_labels"])
-print("Neighbor distances:", result["neighbor_distances"])
-print("Disagreement:", result["disagreement"])
-print("Average distance:", result["average_distance"])
-
-print("\nTesting complete diagnosis with 256-D query:")
-
-query_256 = np.random.rand(256)
-
-training_256 = np.random.rand(20, 256)
-
-training_labels_256 = np.array([
-    0, 0, 0, 0,
-    1, 1, 1, 1,
-    2, 2, 2, 2,
-    3, 3, 3, 3,
-    4, 4, 4, 4
-])
-
-result = diagnose_query(
-    query_embedding=query_256,
-    embeddings=training_256,
-    labels=training_labels_256,
-    k=5
-)
-
-print("Diagnosis:", result["diagnosis"])
-print("Neighbor labels:", result["neighbor_labels"])
-print("Neighbor distances:", result["neighbor_distances"])
-print("Disagreement:", result["disagreement"])
-print("Average distance:", result["average_distance"])
-
-print("\nTesting complete 256-D learning plan:")
-
-plan = create_learning_plan(
-    query_embedding=query_256,
-    embeddings=training_256,
-    labels=training_labels_256,
-    k=5
-)
-
-print("Diagnosis:", plan["diagnosis"])
-print("Action:", plan["action"])
-print("Disagreement:", plan["disagreement"])
-print("Average distance:", plan["average_distance"])
+if __name__ == "__main__":
+    main()

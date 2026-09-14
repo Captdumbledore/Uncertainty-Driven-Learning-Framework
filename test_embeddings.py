@@ -1,12 +1,13 @@
-from akrm.diagnosis.knn import find_knn
+
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset
 import numpy as np
+
 from akrm.diagnosis.embeddings import extract_embeddings
+from akrm.diagnosis.knn import find_knn
 
 
-# Small dummy CNN
 class DummyCNN(nn.Module):
 
     def __init__(self):
@@ -35,46 +36,66 @@ class DummyCNN(nn.Module):
         return x
 
 
-# Create dummy images
-x = torch.randn(10, 1, 28, 28)
+def main():
 
-# Create dummy labels
-y = torch.tensor([0, 1, 0, 1, 0, 1, 0, 1, 0, 1])
+    # Create dummy images
+    x = torch.randn(10, 1, 28, 28)
 
-dataset = TensorDataset(x, y)
+    # Create dummy labels
+    y = torch.tensor([0, 1, 0, 1, 0, 1, 0, 1, 0, 1])
 
-# Use CPU
-device = torch.device("cpu")
+    dataset = TensorDataset(x, y)
 
-# Create model
-model = DummyCNN()
+    # Use CPU
+    device = torch.device("cpu")
 
-# Extract embeddings
-embeddings, labels = extract_embeddings(
-    model,
-    dataset,
-    device,
-    batch_size=5
-)
+    # Create model
+    model = DummyCNN()
 
-query = embeddings[0]
+    # Extract embeddings
+    embeddings, labels = extract_embeddings(
+        model,
+        dataset,
+        device,
+        batch_size=5
+    )
 
-indices, distances, neighbor_labels = find_knn(
-    query,
-    embeddings,
-    labels,
-    k=3
-)
+    # Check embedding extraction
+    assert embeddings.shape == (10, 8)
+    assert labels.shape == (10,)
+    assert np.array_equal(labels, y.numpy())
 
-print("K-NN neighbor indices:", indices)
-print("K-NN neighbor distances:", distances)
-print("K-NN neighbor labels:", neighbor_labels)
+    query = embeddings[0]
 
-class_counts = np.bincount(neighbor_labels)
+    indices, distances, neighbor_labels = find_knn(
+        query,
+        embeddings,
+        labels,
+        k=3
+    )
 
-print("Neighbor class counts:", class_counts)
+    # Check K-NN output
+    assert len(indices) == 3
+    assert len(distances) == 3
+    assert len(neighbor_labels) == 3
+    assert indices[0] == 0
+    assert distances[0] == 0.0
 
-print("Embedding shape:", embeddings.shape)
-print("Labels shape:", labels.shape)
-print("First embedding:", embeddings[0])
-print("Labels:", labels)
+    print("K-NN neighbor indices:", indices)
+    print("K-NN neighbor distances:", distances)
+    print("K-NN neighbor labels:", neighbor_labels)
+
+    class_counts = np.bincount(neighbor_labels)
+
+    print("Neighbor class counts:", class_counts)
+
+    print("Embedding shape:", embeddings.shape)
+    print("Labels shape:", labels.shape)
+    print("First embedding:", embeddings[0])
+    print("Labels:", labels)
+
+    print("All embedding tests passed!")
+
+
+if __name__ == "__main__":
+    main()
