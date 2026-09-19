@@ -245,6 +245,7 @@ class AdaptiveKnowledgeReasoningModule:
             candidate_indices,
             self._embeddings,
             self.config.experience_pool_size,
+            dataset=self.train_dataset,
         )
 
         # 7. Build the final Experience Pool

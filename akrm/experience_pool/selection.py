@@ -2,6 +2,8 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
+from .quality import ExperienceQualityEvaluator
+
 
 class ExperienceSelector:
     """
@@ -14,6 +16,7 @@ class ExperienceSelector:
         quality_weight: float = 0.4,
         diversity_weight: float = 0.3,
         novelty_weight: float = 0.3,
+        quality_evaluator: Optional[ExperienceQualityEvaluator] = None,
     ):
         total = quality_weight + diversity_weight + novelty_weight
 
@@ -23,6 +26,9 @@ class ExperienceSelector:
         self.quality_weight = quality_weight / total
         self.diversity_weight = diversity_weight / total
         self.novelty_weight = novelty_weight / total
+        self.quality_evaluator = (
+            quality_evaluator or ExperienceQualityEvaluator()
+        )
 
     @staticmethod
     def _normalize(values: Sequence[float]) -> np.ndarray:
@@ -44,22 +50,30 @@ class ExperienceSelector:
         self,
         candidate_indices: Sequence[int],
         embeddings: np.ndarray,
+        dataset=None,
     ) -> Dict[int, float]:
         """
-        Evaluate candidate experience quality using embedding quality.
+        Evaluate candidate experience quality.
 
-        Candidates are scored using:
-        - embedding validity
-        - embedding finiteness
-        - embedding magnitude
+        If a dataset is provided, image-level quality is evaluated
+        using ExperienceQualityEvaluator.
 
-        Higher quality indicates a valid and informative embedding.
+        Otherwise, embedding validity and magnitude are used
+        as a fallback quality signal.
         """
         candidates = list(candidate_indices)
 
         if not candidates:
             return {}
 
+        # Use image-level quality evaluation when a dataset is available.
+        if dataset is not None:
+            return self.quality_evaluator.score_candidates(
+                candidates,
+                dataset,
+            )
+
+        # Fallback to embedding-based quality evaluation.
         raw_scores = []
 
         for index in candidates:
@@ -127,7 +141,10 @@ class ExperienceSelector:
                 scores.append(0.0)
                 continue
 
-            candidate_embedding = np.asarray(embeddings[index], dtype=float)
+            candidate_embedding = np.asarray(
+                embeddings[index],
+                dtype=float,
+            )
 
             if not np.all(np.isfinite(candidate_embedding)):
                 scores.append(0.0)
@@ -138,10 +155,12 @@ class ExperienceSelector:
                     embeddings[valid_references],
                     dtype=float,
                 )
+
                 distances = np.linalg.norm(
                     reference_embeddings - candidate_embedding,
                     axis=1,
                 )
+
                 scores.append(float(np.mean(distances)))
             else:
                 scores.append(1.0)
@@ -206,9 +225,13 @@ class ExperienceSelector:
         embeddings: np.ndarray,
         top_n: int,
         reference_indices: Optional[Sequence[int]] = None,
+        dataset=None,
     ) -> List[int]:
         """
         Greedily select the highest-scoring Top-N candidates.
+
+        Quality is evaluated using image-level quality when a dataset
+        is provided. Otherwise, embedding quality is used.
         """
         if top_n <= 0:
             return []
@@ -221,6 +244,7 @@ class ExperienceSelector:
         quality = self.quality_scores(
             candidates,
             embeddings,
+            dataset,
         )
 
         diversity = self.diversity_scores(
