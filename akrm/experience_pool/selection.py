@@ -46,26 +46,54 @@ class ExperienceSelector:
         embeddings: np.ndarray,
     ) -> Dict[int, float]:
         """
-        Assign a quality score based on embedding validity.
+        Evaluate candidate experience quality using embedding quality.
 
-        Valid, finite embeddings receive a quality score of 1.
-        Invalid or non-finite embeddings receive 0.
+        Candidates are scored using:
+        - embedding validity
+        - embedding finiteness
+        - embedding magnitude
+
+        Higher quality indicates a valid and informative embedding.
         """
-        scores = {}
+        candidates = list(candidate_indices)
 
-        for index in candidate_indices:
+        if not candidates:
+            return {}
+
+        raw_scores = []
+
+        for index in candidates:
             if index < 0 or index >= len(embeddings):
-                scores[index] = 0.0
+                raw_scores.append(0.0)
                 continue
 
-            embedding = np.asarray(embeddings[index])
+            embedding = np.asarray(
+                embeddings[index],
+                dtype=float,
+            )
 
-            if embedding.size == 0 or not np.all(np.isfinite(embedding)):
-                scores[index] = 0.0
+            # Invalid or empty embeddings receive zero quality.
+            if (
+                embedding.size == 0
+                or not np.all(np.isfinite(embedding))
+            ):
+                raw_scores.append(0.0)
+                continue
+
+            # Embedding magnitude provides a simple informativeness signal.
+            magnitude = float(np.linalg.norm(embedding))
+
+            if not np.isfinite(magnitude):
+                raw_scores.append(0.0)
             else:
-                scores[index] = 1.0
+                raw_scores.append(magnitude)
 
-        return scores
+        normalized = self._normalize(raw_scores)
+
+        return {
+            index: float(score)
+            for index, score in zip(candidates, normalized)
+        }
 
     def novelty_scores(
         self,

@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import TensorDataset
 
-from experience_pool import ExperiencePool
+from akrm.experience_pool import ExperiencePool, ExperienceSelector
 
 
 def main():
@@ -80,6 +80,28 @@ def main():
 
     assert result.indices == []
 
+    # Experience quality evaluation
+    embeddings = torch.tensor([
+        [0.0, 0.0],
+        [0.1, 0.1],
+        [1.0, 1.0],
+        [2.0, 2.0]
+    ]).numpy()
 
+    selector = ExperienceSelector()
+
+    quality_scores = selector.quality_scores(
+        [0, 1, 2, 3],
+        embeddings
+    )
+
+    print("Quality scores:", quality_scores)
+
+    assert len(quality_scores) == 4
+    assert all(0.0 <= score <= 1.0 for score in quality_scores.values())
+    assert quality_scores[0] <= quality_scores[1]
+    assert quality_scores[1] <= quality_scores[2]
+    assert quality_scores[2] <= quality_scores[3]
 if __name__ == "__main__":
     main()
+    
