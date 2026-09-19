@@ -4,8 +4,8 @@ from torch.utils.data import Subset
 from typing import Optional, List, Dict, Any
 
 from akrm.diagnosis import (
-    AKRMConfig, 
-    UncertaintyAnalysisEngine, 
+    AKRMConfig,
+    UncertaintyAnalysisEngine,
     KnowledgeGapDiagnoser
 )
 from akrm.objective import LearningObjectiveGenerator
@@ -17,15 +17,19 @@ from akrm.provider.synthetic import SyntheticProvider
 from akrm.provider.external import ExternalProvider
 from akrm.validator import ExperienceValidator
 from akrm.executor import LearningStrategyExecutor
+from akrm.experience_pool import ExperiencePool, ExperienceSelector
+
 
 class AdaptiveKnowledgeReasoningModule:
     """
     Orchestrates the Adaptive Learning Experience Framework pipeline.
-    
+
     Pipeline:
-    MC Dropout -> Diagnosis -> Objective Generation -> Adaptive Experience Planner 
-    -> Experience Provider -> Experience Validator -> Learning Strategy Executor
+    MC Dropout -> Diagnosis -> Objective Generation -> Adaptive Experience Planner
+    -> Experience Provider -> Experience Validator -> Experience Pool Selection
+    -> Learning Strategy Executor
     """
+
     def __init__(
         self,
         model: torch.nn.Module,
@@ -50,10 +54,19 @@ class AdaptiveKnowledgeReasoningModule:
         self._analysis_engine = UncertaintyAnalysisEngine(unc_results)
         self._diagnoser = KnowledgeGapDiagnoser(self.config)
         self._objective_gen = LearningObjectiveGenerator()
-        self._planner = KnowledgeGuidedExperiencePlanner(policy_type=self.config.policy_type)
+        self._planner = KnowledgeGuidedExperiencePlanner(
+            policy_type=self.config.policy_type
+        )
         self._validator = ExperienceValidator()
         self._executor = LearningStrategyExecutor()
-        
+
+        self._experience_pool = None
+        self._experience_selector = ExperienceSelector(
+            quality_weight=self.config.quality_weight,
+            diversity_weight=self.config.diversity_weight,
+            novelty_weight=self.config.novelty_weight,
+        )
+
         # Providers (instantiated after embeddings are ready)
         self._providers: Dict[ProviderType, Any] = {}
 
@@ -61,89 +74,162 @@ class AdaptiveKnowledgeReasoningModule:
         """Extract embeddings for the training dataset."""
         self.model.eval()
         embeddings, labels = [], []
-        # Fallback to dummy extraction if not fully implemented in this MVP
-        import torch.nn.functional as F
+
         from torch.utils.data import DataLoader
-        
-        loader = DataLoader(self.train_dataset, batch_size=256, shuffle=False)
+
+        loader = DataLoader(
+            self.train_dataset,
+            batch_size=256,
+            shuffle=False
+        )
+
         with torch.no_grad():
             for x, y in loader:
                 x = x.to(self.device)
                 emb = self.model.extract_features(x)
+
                 embeddings.append(emb.cpu().numpy())
                 labels.append(y.numpy())
+
         self._embeddings = np.concatenate(embeddings)
         self._train_labels = np.concatenate(labels)
 
-    def _compute_density_dist(self, sample_idx: int, true_label: int) -> float:
+    def _compute_density_dist(
+        self,
+        sample_idx: int,
+        true_label: int
+    ) -> float:
         """Computes distance to k-th nearest same-class neighbour."""
         same_class_mask = (self._train_labels == true_label)
         same_class_mask[sample_idx] = False
+
         same_class_idx = np.where(same_class_mask)[0]
-        
+
         if len(same_class_idx) < self.config.density_k:
             return 999.0
-            
+
         sample_emb = self._embeddings[sample_idx]
         same_class_embs = self._embeddings[same_class_idx]
-        dists = np.linalg.norm(same_class_embs - sample_emb, axis=1)
-        kth_dist = float(np.sort(dists)[self.config.density_k - 1])
+
+        dists = np.linalg.norm(
+            same_class_embs - sample_emb,
+            axis=1
+        )
+
+        kth_dist = float(
+            np.sort(dists)[self.config.density_k - 1]
+        )
+
         return kth_dist
 
     def run(self, uncertain_indices: np.ndarray) -> Subset:
         """
         Execute the full framework.
         """
-        print(f"\n    AKRM v2: Extracting embeddings...")
+
+        print("\n    AKRM v2: Extracting embeddings...")
         self._extract_embeddings()
-        
+
+        # Initialize Experience Pool
+        self._experience_pool = ExperiencePool(
+            self.train_dataset
+        )
+
         # Initialize Providers
         self._providers = {
-            ProviderType.RETRIEVAL: RetrievalProvider(self._train_labels, self._embeddings, self.config.n_retrieve_retrieval),
-            ProviderType.COUNTEREXAMPLE: CounterexampleProvider(self._train_labels, self._embeddings, self.config.n_retrieve_counterexample),
+            ProviderType.RETRIEVAL: RetrievalProvider(
+                self._train_labels,
+                self._embeddings,
+                self.config.n_retrieve_retrieval
+            ),
+            ProviderType.COUNTEREXAMPLE: CounterexampleProvider(
+                self._train_labels,
+                self._embeddings,
+                self.config.n_retrieve_counterexample
+            ),
             ProviderType.CONTEXTUAL: ContextualProvider(),
             ProviderType.SYNTHETIC: SyntheticProvider(),
             ProviderType.EXTERNAL: ExternalProvider(),
         }
 
-        print(f"    AKRM v2: Pass 1 — Diagnosis ({len(uncertain_indices):,} samples)...")
+        print(
+            f"    AKRM v2: Pass 1 — Diagnosis "
+            f"({len(uncertain_indices):,} samples)..."
+        )
+
         analyses, density_dists = [], []
+
         for idx in uncertain_indices:
             analysis = self._analysis_engine.analyse(int(idx))
-            density_dist = self._compute_density_dist(int(idx), analysis["true_label"])
+
+            density_dist = self._compute_density_dist(
+                int(idx),
+                analysis["true_label"]
+            )
+
             analyses.append(analysis)
             density_dists.append(density_dist)
 
-        density_threshold = float(np.percentile(density_dists, self.config.sparse_density_percentile))
+        density_threshold = float(
+            np.percentile(
+                density_dists,
+                self.config.sparse_density_percentile
+            )
+        )
 
-        print(f"    AKRM v2: Pass 2 — Generating Objectives & Planning...")
-        experience_pool_indices = set()
-        
-        for analysis, density_dist in zip(analyses, density_dists):
+        print(
+            "    AKRM v2: Pass 2 — "
+            "Generating Objectives & Planning..."
+        )
+
+        candidate_indices = []
+
+        for analysis, density_dist in zip(
+            analyses,
+            density_dists
+        ):
             # 1. Diagnosis
-            gap = self._diagnoser.diagnose(analysis, density_dist, density_threshold, self.class_names)
-            
+            gap = self._diagnoser.diagnose(
+                analysis,
+                density_dist,
+                density_threshold,
+                self.class_names
+            )
+
             # 2. Objective Generation
             objective = self._objective_gen.generate(gap)
-            
+
             # 3. Adaptive Planning
-            provider_type = self._planner.select_strategy(objective, gap)
+            provider_type = self._planner.select_strategy(
+                objective,
+                gap
+            )
+
             provider = self._providers[provider_type]
-            
+
             # 4. Experience Provision
             if provider_type == ProviderType.COUNTEREXAMPLE:
                 raw_experiences = provider.provide(
-                    gap.sample_idx, objective, true_class=gap.true_class, confused_class=gap.top2_class
+                    gap.sample_idx,
+                    objective,
+                    true_class=gap.true_class,
+                    confused_class=gap.top2_class
                 )
             else:
-                raw_experiences = provider.provide(gap.sample_idx, objective)
-                
+                raw_experiences = provider.provide(
+                    gap.sample_idx,
+                    objective
+                )
+
             # 5. Experience Validation
-            valid_experiences = self._validator.validate(raw_experiences, objective)
-            
-            # For MVP: Add validated indices to pool
-            experience_pool_indices.update(valid_experiences)
-            
+            valid_experiences = self._validator.validate(
+                raw_experiences,
+                objective
+            )
+
+            # Collect validated candidate indices
+            candidate_indices.extend(valid_experiences)
+
             # Logging
             self._reasoning_log.append({
                 **analysis,
@@ -154,56 +240,145 @@ class AdaptiveKnowledgeReasoningModule:
                 "n_valid_experiences": len(valid_experiences),
             })
 
-        pool_list = sorted(list(experience_pool_indices))
-        final_subset = Subset(self.train_dataset, pool_list)
-        
-        print(f"    AKRM v2: Curated Experience Dataset size: {len(final_subset):,}")
-        
-        # 6. Learning Strategy Executor
-        # In a fully integrated system, the executor would take over the training loop here.
-        # For this prototype, we return the subset to the main pipeline.
-        self._executor.execute(self.model, final_subset)
-        
+        # 6. Score candidates and select Top-N
+        selected_indices = self._experience_selector.select_top_n(
+            candidate_indices,
+            self._embeddings,
+            self.config.experience_pool_size,
+        )
+
+        # 7. Build the final Experience Pool
+        final_subset = self._experience_pool.build(
+            selected_indices,
+            max_samples=self.config.experience_pool_size,
+        )
+
+        print(
+            f"    AKRM v2: Curated Experience Dataset size: "
+            f"{len(final_subset):,}"
+        )
+
+        # 8. Learning Strategy Executor
+        # For this prototype, the curated subset is returned
+        # to the main pipeline.
+        self._executor.execute(
+            self.model,
+            final_subset
+        )
+
         return final_subset
 
     def print_summary(self):
-        print(f"    AKRM v2: Strategy selection summary:")
+        print(
+            "    AKRM v2: Strategy selection summary:"
+        )
+
         from collections import Counter
-        counts = Counter(log['selected_provider'] for log in self._reasoning_log)
+
+        counts = Counter(
+            log["selected_provider"]
+            for log in self._reasoning_log
+        )
+
         for provider, count in counts.items():
-            print(f"      {provider}: {count:,}")
-        
+            print(
+                f"      {provider}: {count:,}"
+            )
+
     def save_reasoning_report(self, save_path: str):
         import pandas as pd
         import os
+
         if not self._reasoning_log:
             return
-        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
-        df = pd.DataFrame(self._reasoning_log)
-        df.to_csv(save_path, index=False)
-        print(f"    AKRM v2: Reasoning report saved → {save_path}")
+
+        os.makedirs(
+            os.path.dirname(save_path) or ".",
+            exist_ok=True
+        )
+
+        df = pd.DataFrame(
+            self._reasoning_log
+        )
+
+        df.to_csv(
+            save_path,
+            index=False
+        )
+
+        print(
+            f"    AKRM v2: Reasoning report saved → "
+            f"{save_path}"
+        )
 
     def save_diagnosis_validation(self, save_path: str):
         """
-        Writes a plain-text diagnosis validation report summarising
-        the knowledge gap types and selected strategies for this run.
+        Writes a plain-text diagnosis validation report
+        summarising the knowledge gap types and selected
+        strategies for this run.
         """
+
         import os
         from collections import Counter
+
         if not self._reasoning_log:
             return
-        os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
-        gap_counts      = Counter(r["knowledge_gap"]      for r in self._reasoning_log)
-        strategy_counts = Counter(r["selected_provider"]  for r in self._reasoning_log)
+
+        os.makedirs(
+            os.path.dirname(save_path) or ".",
+            exist_ok=True
+        )
+
+        gap_counts = Counter(
+            r["knowledge_gap"]
+            for r in self._reasoning_log
+        )
+
+        strategy_counts = Counter(
+            r["selected_provider"]
+            for r in self._reasoning_log
+        )
+
         total = len(self._reasoning_log)
-        with open(save_path, "w", encoding="utf-8") as fh:
-            fh.write("AKRM v2 — Diagnosis Validation Report\n")
+
+        with open(
+            save_path,
+            "w",
+            encoding="utf-8"
+        ) as fh:
+            fh.write(
+                "AKRM v2 — Diagnosis Validation Report\n"
+            )
             fh.write("=" * 50 + "\n\n")
-            fh.write(f"Total uncertain samples analysed: {total:,}\n\n")
-            fh.write("Knowledge Gap Distribution:\n")
+
+            fh.write(
+                f"Total uncertain samples analysed: "
+                f"{total:,}\n\n"
+            )
+
+            fh.write(
+                "Knowledge Gap Distribution:\n"
+            )
+
             for gap, count in gap_counts.most_common():
-                fh.write(f"  {gap:<40} {count:>6,}  ({100*count/total:.1f}%)\n")
-            fh.write("\nSelected Provider Distribution:\n")
+                fh.write(
+                    f"  {gap:<40} "
+                    f"{count:>6,}  "
+                    f"({100 * count / total:.1f}%)\n"
+                )
+
+            fh.write(
+                "\nSelected Provider Distribution:\n"
+            )
+
             for strategy, count in strategy_counts.most_common():
-                fh.write(f"  {strategy:<40} {count:>6,}  ({100*count/total:.1f}%)\n")
-        print(f"    AKRM v2: Diagnosis validation report saved → {save_path}")
+                fh.write(
+                    f"  {strategy:<40} "
+                    f"{count:>6,}  "
+                    f"({100 * count / total:.1f}%)\n"
+                )
+
+        print(
+            f"    AKRM v2: Diagnosis validation report "
+            f"saved → {save_path}"
+        )

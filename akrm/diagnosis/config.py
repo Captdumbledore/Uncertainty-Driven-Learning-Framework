@@ -11,3 +11,7 @@ class AKRMConfig:
     sparse_density_percentile: float = 66.7
     n_retrieve_retrieval: int = 8
     n_retrieve_counterexample: int = 8
+    experience_pool_size: int = 100
+    quality_weight: float = 0.4
+    diversity_weight: float = 0.3
+    novelty_weight: float = 0.3
