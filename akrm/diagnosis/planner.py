@@ -1,6 +1,6 @@
 from enum import Enum
 
-from .gap_types import KnowledgeGapType
+from .gap_types import KnowledgeGapType, KnowledgeGap
 
 
 class ProviderType(str, Enum):
@@ -66,11 +66,14 @@ class KnowledgeGuidedExperiencePlanner:
         if self.policy_type == "random":
             if margin < 0.5:
                 return ProviderType.COUNTEREXAMPLE
+
             return ProviderType.RETRIEVAL
 
         if objective == LearningObjective.IMPROVE_CLASS_SEPARATION:
+
             if margin < 0.10:
                 return ProviderType.COUNTEREXAMPLE
+
             return ProviderType.SYNTHETIC
 
         if objective == LearningObjective.INCREASE_INTRA_CLASS_DIVERSITY:
@@ -86,3 +89,26 @@ class KnowledgeGuidedExperiencePlanner:
             return ProviderType.RETRIEVAL
 
         return ProviderType.RETRIEVAL
+
+    def plan_for_gap(self, gap: KnowledgeGap) -> dict:
+        """
+        Convert a diagnosed knowledge gap into
+        a learning objective and learning strategy.
+        """
+
+        objective = self.objective_generator.generate(
+            gap.gap_type
+        )
+
+        strategy = self.select_strategy(
+            gap.gap_type,
+            margin=gap.margin
+        )
+
+        return {
+            "sample_idx": gap.sample_idx,
+            "gap_type": gap.gap_type,
+            "learning_objective": objective,
+            "strategy": strategy,
+            "explanation": gap.explanation
+        }
