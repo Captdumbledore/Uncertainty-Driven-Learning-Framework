@@ -33,6 +33,9 @@ def main():
         val_loader=validation_loader,
         epochs=10,
         lr=0.001,
+
+
+
         device=device,
     )
 
