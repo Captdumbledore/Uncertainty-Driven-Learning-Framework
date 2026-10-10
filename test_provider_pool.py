@@ -2,12 +2,12 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset
 
-from experience_providers import (
+from akrm.provider import (
     CounterexampleProvider,
     RetrievalProvider
 )
-from experience_pool import ExperiencePool
-from test_objective import LearningObjective
+from akrm.experience_pool import ExperiencePool
+from akrm.objective import LearningObjective
 
 
 def main():
