@@ -112,11 +112,23 @@ def diagnose_query(
         distances
     )
 
+    from .boundary import calculate_boundary_info
+
+    boundary_info = calculate_boundary_info(
+        query_embedding,
+        embeddings,
+        labels,
+        k=k
+    )
+
     return {
         "diagnosis": diagnosis,
         "neighbor_indices": indices,
         "neighbor_distances": distances,
         "neighbor_labels": neighbor_labels,
         "disagreement": disagreement,
-        "average_distance": average_distance
+        "average_distance": average_distance,
+        "boundary_weight": boundary_info["boundary_weight"],
+        "distance_weight": boundary_info["distance_weight"],
+        "boundary_severity": boundary_info["boundary_severity"]
     }
