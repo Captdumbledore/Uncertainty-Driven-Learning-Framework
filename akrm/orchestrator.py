@@ -6,7 +6,8 @@ from typing import Optional, List, Dict, Any
 from akrm.diagnosis import (
     AKRMConfig, 
     UncertaintyAnalysisEngine, 
-    KnowledgeGapDiagnoser
+    KnowledgeGapDiagnoser,
+    KnowledgeMemory,
 )
 from akrm.objective import LearningObjectiveGenerator
 from akrm.planner import KnowledgeGuidedExperiencePlanner, ProviderType
@@ -53,6 +54,9 @@ class AdaptiveKnowledgeReasoningModule:
         self._planner = KnowledgeGuidedExperiencePlanner(policy_type=self.config.policy_type)
         self._validator = ExperienceValidator()
         self._executor = LearningStrategyExecutor()
+
+        # Knowledge Memory — caches diagnosed gaps to avoid reprocessing
+        self._memory = KnowledgeMemory()
         
         # Providers (instantiated after embeddings are ready)
         self._providers: Dict[ProviderType, Any] = {}
@@ -121,7 +125,11 @@ class AdaptiveKnowledgeReasoningModule:
         
         for analysis, density_dist in zip(analyses, density_dists):
             # 1. Diagnosis
-            gap = self._diagnoser.diagnose(analysis, density_dist, density_threshold, self.class_names)
+            raw_gap = self._diagnoser.diagnose(analysis, density_dist, density_threshold, self.class_names)
+
+            # 1b. Knowledge Memory — reuse cached gap if seen before,
+            #     otherwise cache the new diagnosis.
+            gap = self._memory.get_or_add(raw_gap)
             
             # 2. Objective Generation
             objective = self._objective_gen.generate(gap)
@@ -158,8 +166,12 @@ class AdaptiveKnowledgeReasoningModule:
         final_subset = Subset(self.train_dataset, pool_list)
         
         print(f"    AKRM v2: Curated Experience Dataset size: {len(final_subset):,}")
-        
-        # 6. Learning Strategy Executor
+
+        # 6. Memory Decay — age out stale knowledge gaps
+        self._memory.decay_memory()
+        print(f"    AKRM v2: Knowledge Memory size after decay: {self._memory.size():,}")
+
+        # 7. Learning Strategy Executor
         # In a fully integrated system, the executor would take over the training loop here.
         # For this prototype, we return the subset to the main pipeline.
         self._executor.execute(self.model, final_subset)
